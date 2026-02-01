@@ -9,7 +9,7 @@
 
 **Zespół projektowy:**
 - **Michał Cichosz** – projekt koncepcji chatbota, przygotowanie logiki działania systemu, dokumentacja projektowa
-- **Radosław Gęgotek** – analiza danych finansowych, przygotowanie źródeł danych (raporty finansowe), testowanie działania chatbota
+- **Radosław Gęgotek** – projekt aplikacji React (frontend), analiza danych finansowych, przygotowanie źródeł danych (raporty finansowe), testowanie działania chatbota
 
 **Okres realizacji:** Styczeń 2026
 
@@ -18,7 +18,7 @@
 - AI/ML: Google Gemini API (gemini-1.5-flash)
 - Baza danych: SQLite + SQLAlchemy (async)
 - Przetwarzanie PDF: PyPDF2, pdfplumber
-- Frontend: Angular (planowany)
+- Frontend: React
 
 ---
 
