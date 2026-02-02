@@ -20,6 +20,9 @@ export const reportsApi = {
   upload: (formData) => client.post('/reports/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
+  autoUpload: (formData) => client.post('/reports/auto-upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
   delete: (id) => client.delete(`/reports/${id}`),
 };
 

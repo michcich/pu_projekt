@@ -91,7 +91,7 @@ async def upload_report(
         
         return ReportUploadResponse(
             id=new_report.id,
-            company_id=new_report.company_id,  # <-- Tego brakowało
+            company_id=new_report.company_id,
             filename=new_report.original_filename,
             company_name=new_report.company_name,
             report_period=new_report.report_period,
@@ -104,6 +104,118 @@ async def upload_report(
     except Exception as e:
         if os.path.exists(file_path):
             os.remove(file_path)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/auto-upload", response_model=ReportUploadResponse)
+async def auto_upload_report(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_session)
+):
+    """Automatycznie rozpoznaj firmę z PDF i przypisz raport"""
+    
+    # 1. Validate file
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > settings.max_upload_size:
+        raise HTTPException(status_code=400, detail="File too large")
+    
+    # 2. Save file temporarily
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"
+    file_path = os.path.join(settings.upload_folder, unique_filename)
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # 3. Process PDF
+        processing_result = pdf_processor.process_report(file_path)
+        
+        if not processing_result["success"]:
+            os.remove(file_path)
+            raise HTTPException(status_code=500, detail=processing_result.get("error"))
+            
+        # 4. Extract Company Info using AI
+        text_sample = processing_result.get("text", "")[:5000]
+        company_info = await gemini_service.extract_company_info(text_sample)
+        
+        if not company_info or not company_info.get("name"):
+            os.remove(file_path)
+            raise HTTPException(status_code=400, detail="Could not identify company from report")
+            
+        company_name = company_info.get("name")
+        
+        # 5. Find or Create Company
+        result = await db.execute(select(Company).where(Company.name == company_name))
+        company = result.scalar_one_or_none()
+        
+        if not company:
+            # Create new company
+            company = Company(
+                name=company_name,
+                ticker=company_info.get("ticker"),
+                industry=company_info.get("industry"),
+                description=company_info.get("description")
+            )
+            db.add(company)
+            await db.commit()
+            await db.refresh(company)
+            
+        # 6. Create Report Record
+        new_report = Report(
+            filename=unique_filename,
+            original_filename=file.filename,
+            company_id=company.id,
+            company_name=company.name,
+            report_period=company_info.get("report_period") or processing_result.get("report_period"),
+            report_year=company_info.get("report_year"),
+            report_quarter=company_info.get("report_quarter"),
+            report_type="quarterly" if company_info.get("report_quarter") else "annual",
+            file_size=file_size,
+            file_path=file_path,
+            extracted_text=processing_result.get("text", "")[:50000],
+            key_metrics=processing_result.get("metrics"),
+            status="processing"
+        )
+        
+        db.add(new_report)
+        await db.commit()
+        await db.refresh(new_report)
+        
+        # 7. Generate Summary
+        try:
+            summary = await gemini_service.generate_summary(processing_result.get("text", ""))
+            new_report.summary = summary
+            new_report.status = "processed"
+        except Exception:
+            new_report.status = "processed_no_summary"
+        
+        await db.commit()
+        
+        return ReportUploadResponse(
+            id=new_report.id,
+            company_id=new_report.company_id,
+            filename=new_report.original_filename,
+            company_name=new_report.company_name,
+            report_period=new_report.report_period,
+            report_type=new_report.report_type,
+            upload_date=new_report.upload_date,
+            file_size=new_report.file_size,
+            status=new_report.status
+        )
+        
+    except Exception as e:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
         raise HTTPException(status_code=500, detail=str(e))
 
 

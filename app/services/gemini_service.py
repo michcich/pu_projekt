@@ -1,5 +1,6 @@
 import google.generativeai as genai
 from typing import List, Dict, Optional
+import json
 from app.config import settings
 from app.models.schemas import ChatMessage, MessageRole
 
@@ -217,3 +218,38 @@ ANALIZA TRENDÓW:"""
                 "success": False,
                 "error": str(e)
             }
+
+    async def extract_company_info(self, text: str) -> Dict[str, any]:
+        """Wyodrębnij informacje o firmie z tekstu raportu"""
+        try:
+            prompt = f"""Przeanalizuj początek raportu finansowego i wyodrębnij dane firmy w formacie JSON.
+            
+            TEKST:
+            {text[:5000]}
+            
+            Zwróć TYLKO obiekt JSON w formacie:
+            {{
+                "name": "Pełna nazwa firmy",
+                "ticker": "Symbol giełdowy (jeśli jest, inaczej null)",
+                "industry": "Branża (wywnioskuj z opisu)",
+                "description": "Krótki opis działalności (max 1 zdanie)",
+                "report_period": "Okres raportu (np. Q3 2024, 2023)",
+                "report_year": 2024 (rok jako int),
+                "report_quarter": 3 (kwartał jako int 1-4 lub null dla rocznego)
+            }}
+            """
+            
+            response = self.model.generate_content(prompt)
+            
+            # Clean response to ensure valid JSON
+            json_str = response.text.strip()
+            if json_str.startswith("```json"):
+                json_str = json_str[7:-3]
+            elif json_str.startswith("```"):
+                json_str = json_str[3:-3]
+                
+            return json.loads(json_str)
+            
+        except Exception as e:
+            print(f"Error extracting company info: {e}")
+            return None

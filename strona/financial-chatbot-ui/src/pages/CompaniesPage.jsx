@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { companiesApi } from '../api/client';
-import { Plus, Building, FileText, Trash2, Search } from 'lucide-react';
+import { companiesApi, reportsApi } from '../api/client';
+import { Plus, Building, FileText, Trash2, Search, UploadCloud, Loader2 } from 'lucide-react';
 
 const CompaniesPage = () => {
   const [companies, setCompanies] = useState([]);
@@ -9,6 +9,7 @@ const CompaniesPage = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newCompany, setNewCompany] = useState({ name: '', ticker: '', industry: '', description: '' });
   const [searchTerm, setSearchTerm] = useState('');
+  const [isAutoUploading, setIsAutoUploading] = useState(false);
 
   useEffect(() => {
     fetchCompanies();
@@ -49,6 +50,27 @@ const CompaniesPage = () => {
     }
   };
 
+  const handleAutoUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    setIsAutoUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      await reportsApi.autoUpload(formData);
+      alert('Raport przetworzony pomyślnie! Firma została zaktualizowana.');
+      fetchCompanies();
+    } catch (error) {
+      alert('Błąd automatycznego przetwarzania: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setIsAutoUploading(false);
+      // Reset input value to allow uploading same file again
+      e.target.value = '';
+    }
+  };
+
   const filteredCompanies = companies.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.ticker && c.ticker.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -61,13 +83,35 @@ const CompaniesPage = () => {
           <h2 className="text-2xl font-bold text-white">Firmy</h2>
           <p className="text-gray-400 mt-1">Zarządzaj bazą firm i ich raportami</p>
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
-        >
-          <Plus size={20} className="mr-2" />
-          Dodaj firmę
-        </button>
+        <div className="flex gap-3">
+          <label className={`
+            flex items-center px-4 py-2 bg-green-600 hover:bg-green-700 
+            text-white rounded-lg transition-colors cursor-pointer
+            ${isAutoUploading ? 'opacity-70 cursor-not-allowed' : ''}
+          `}>
+            {isAutoUploading ? (
+              <Loader2 size={20} className="mr-2 animate-spin" />
+            ) : (
+              <UploadCloud size={20} className="mr-2" />
+            )}
+            {isAutoUploading ? 'Przetwarzanie...' : 'Szybki Upload PDF'}
+            <input 
+              type="file" 
+              accept=".pdf" 
+              className="hidden" 
+              onChange={handleAutoUpload}
+              disabled={isAutoUploading}
+            />
+          </label>
+          
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+          >
+            <Plus size={20} className="mr-2" />
+            Dodaj firmę
+          </button>
+        </div>
       </div>
 
       {/* Search Bar */}
