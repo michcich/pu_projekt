@@ -75,13 +75,18 @@ class PDFProcessor:
             r"(\d{1,2})\.(\d{4})",
             r"(?:styczeń|luty|marzec|kwiecień|maj|czerwiec|lipiec|sierpień|wrzesień|październik|listopad|grudzień)\s+(\d{4})",
         ]
-        
+
+        best_match = None
+        min_start = float('inf')
+
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(0)
+                if match.start() < min_start:
+                    min_start = match.start()
+                    best_match = match.group(0)
         
-        return None
+        return best_match
     
     def extract_financial_metrics(self, text: str) -> Dict[str, Optional[float]]:
         """Extract basic financial metrics from text"""
