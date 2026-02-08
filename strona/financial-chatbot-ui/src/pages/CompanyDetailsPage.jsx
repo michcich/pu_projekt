@@ -6,6 +6,7 @@ import {
   Send, Bot, User, Loader2, TrendingUp 
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import ChartRenderer from '../components/ChartRenderer';
 
 const CompanyDetailsPage = () => {
   const { id } = useParams();
@@ -54,6 +55,9 @@ const CompanyDetailsPage = () => {
   const fetchChatHistory = async (sid) => {
     try {
       const response = await chatApi.getHistory(sid);
+      // Map history to include chart_data if we stored it (backend currently doesn't store chart_data in history table, 
+      // so charts only appear in current session unless we persist them. 
+      // For now, history load will just show text.)
       setMessages(response.data);
     } catch (error) {
       console.error('Error fetching history:', error);
@@ -70,15 +74,9 @@ const CompanyDetailsPage = () => {
     formData.append('file', file);
     formData.append('company_id', id);
     
-    // Try to guess period from filename
-    let period = "2024";
-    if (file.name.toLowerCase().includes('q1')) period = "Q1 2024";
-    else if (file.name.toLowerCase().includes('q2')) period = "Q2 2024";
-    else if (file.name.toLowerCase().includes('q3')) period = "Q3 2024";
-    else if (file.name.toLowerCase().includes('q4')) period = "Q4 2024";
+    // REMOVED: Manual period guessing logic that was forcing "2024"
+    // The backend will now extract the correct period from the PDF content via AI/Regex
     
-    formData.append('report_period', period);
-
     setUploading(true);
     try {
       await reportsApi.upload(formData);
@@ -125,7 +123,8 @@ const CompanyDetailsPage = () => {
 
       setMessages(prev => [...prev, { 
         role: 'assistant', 
-        content: data.response 
+        content: data.response,
+        chart_data: data.has_chart ? data.chart_data : null
       }]);
     } catch (error) {
       setMessages(prev => [...prev, { 
@@ -317,6 +316,13 @@ const CompanyDetailsPage = () => {
                   <div className="prose prose-invert prose-sm max-w-none">
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   </div>
+                  
+                  {/* Chart Rendering */}
+                  {msg.chart_data && (
+                    <div className="mt-4 text-black">
+                      <ChartRenderer chartData={msg.chart_data} />
+                    </div>
+                  )}
                 </div>
               </div>
             ))

@@ -15,8 +15,7 @@ async def create_company(
     db: AsyncSession = Depends(get_session)
 ):
     """Utwórz nową firmę"""
-    
-    # Sprawdź czy firma o tej nazwie już istnieje
+
     result = await db.execute(
         select(Company).where(Company.name == company.name)
     )
@@ -100,8 +99,7 @@ async def get_company(
     
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    
-    # Pobierz raporty
+
     reports_result = await db.execute(
         select(Report)
         .where(Report.company_id == company_id)
@@ -194,8 +192,7 @@ async def delete_company(
     
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    
-    # Usuń pliki raportów z dysku
+
     import os
     reports_result = await db.execute(
         select(Report).where(Report.company_id == company_id)
@@ -205,8 +202,7 @@ async def delete_company(
     for report in reports:
         if os.path.exists(report.file_path):
             os.remove(report.file_path)
-    
-    # Usuń firmę (kaskadowo usuwa raporty i sesje)
+
     await db.delete(company)
     await db.commit()
     

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from app.config import settings
 from app.database.database import init_db
-from app.api import chat, reports, companies
+from app.api import chat, reports, companies, analytics
 
 
 @asynccontextmanager
@@ -35,9 +35,10 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(companies.router)  # NOWY ROUTER
+app.include_router(companies.router)
 app.include_router(reports.router)
-app.include_router(chat.router)
+app.include_router(chat.router, prefix="/api/chat") # ADDED PREFIX HERE
+app.include_router(analytics.router)
 
 
 @app.get("/")
@@ -52,7 +53,8 @@ async def root():
             "Upload raportów dla firm",
             "Analiza wszystkich raportów firmy",
             "Chatbot z kontekstem wszystkich dokumentów",
-            "Analiza trendów w czasie"
+            "Analiza trendów w czasie",
+            "Wizualizacja danych na wykresach"
         ]
     }
 

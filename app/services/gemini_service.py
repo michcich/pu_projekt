@@ -1,6 +1,7 @@
 import google.generativeai as genai
 from typing import List, Dict, Optional
 import json
+import re
 from app.config import settings
 from app.models.schemas import ChatMessage, MessageRole
 
@@ -18,6 +19,21 @@ Twoje zadania:
 - Identyfikuj trendy na podstawie wielu raportów
 - Wyjaśniaj wskaźniki finansowe w prosty sposób
 - Odpowiadaj po polsku, chyba że użytkownik poprosi o inny język
+
+WAŻNE - Wykresy:
+- Gdy użytkownik pyta o "wykres", "chart", "pokaż na wykresie", "wizualizuj" - zaznacz to w odpowiedzi
+- Jeśli wykryjesz prośbę o wykres, dodaj na końcu odpowiedzi specjalny blok JSON (niewidoczny dla użytkownika w tekście, ale parsowalny przez system):
+```json_chart
+{
+  "needs_chart": true,
+  "chart_config": {
+    "chart_type": "line", // lub "bar", "area"
+    "metrics": ["revenue"], // np. ["revenue", "net_income"]
+    "title": "Tytuł wykresu"
+  }
+}
+```
+Dostępne metryki to zazwyczaj: revenue, net_income, total_assets, total_liabilities, equity.
 
 WAŻNE - Masz dostęp do WSZYSTKICH raportów firmy:
 - Możesz analizować trendy w czasie
@@ -92,10 +108,24 @@ Styl odpowiedzi:
             full_prompt = f"{context}\n\nUżytkownik: {user_message}\n\nAsystent:"
             
             response = self.model.generate_content(full_prompt)
+            response_text = response.text
+            
+            # Extract chart config if present
+            chart_config = None
+            chart_match = re.search(r"```json_chart\s*({.*?})\s*```", response_text, re.DOTALL)
+            if chart_match:
+                try:
+                    chart_json = chart_match.group(1)
+                    chart_config = json.loads(chart_json)
+                    # Remove the JSON block from the text response shown to user
+                    response_text = response_text.replace(chart_match.group(0), "").strip()
+                except json.JSONDecodeError:
+                    pass
             
             return {
                 "success": True,
-                "response": response.text,
+                "response": response_text,
+                "chart_config": chart_config,
                 "suggestions": self._generate_suggestions(user_message, len(all_reports_text))
             }
             
@@ -253,3 +283,51 @@ ANALIZA TRENDÓW:"""
         except Exception as e:
             print(f"Error extracting company info: {e}")
             return None
+
+    async def extract_financial_metrics_ai(self, text: str) -> Dict[str, Optional[float]]:
+        """Extract financial metrics using AI when regex fails"""
+        try:
+            prompt = f"""Przeanalizuj tekst raportu finansowego i wyodrębnij kluczowe SKONSOLIDOWANE wskaźniki finansowe za BIEŻĄCY okres raportowy.
+            
+            TEKST:
+            {text[:15000]}
+            
+            Zwróć TYLKO obiekt JSON z wartościami liczbowymi (float) lub null.
+            
+            Zasady:
+            1. Szukaj "Skonsolidowanych przychodów ze sprzedaży" (Consolidated Revenue).
+            2. Szukaj "Zysku netto" (Net Profit/Income) przypisanego akcjonariuszom jednostki dominującej.
+            3. Wartości muszą być w PEŁNYCH JEDNOSTKACH (np. 73535000000 dla 73 535 mln).
+            4. Jeśli w tekście są "mln PLN", pomnóż przez 1 000 000.
+            5. Ignoruj wyniki cząstkowe (np. tylko segmentu rafineryjnego).
+            
+            Format JSON:
+            {{
+                "revenue": <skonsolidowane przychody>,
+                "net_income": <zysk netto>,
+                "total_assets": <aktywa razem>,
+                "total_liabilities": <zobowiązania razem>,
+                "equity": <kapitał własny>
+            }}
+            """
+            
+            response = self.model.generate_content(prompt)
+            
+            # Clean response
+            json_str = response.text.strip()
+            if json_str.startswith("```json"):
+                json_str = json_str[7:-3]
+            elif json_str.startswith("```"):
+                json_str = json_str[3:-3]
+                
+            return json.loads(json_str)
+            
+        except Exception as e:
+            print(f"Error extracting metrics with AI: {e}")
+            return {
+                "revenue": None,
+                "net_income": None,
+                "total_assets": None,
+                "total_liabilities": None,
+                "equity": None
+            }

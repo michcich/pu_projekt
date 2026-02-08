@@ -98,19 +98,21 @@ class PDFProcessor:
             "equity": None,
         }
         
-        # Patterns for financial data (in thousands PLN)
+        # Patterns for financial data
+        # Supports: 1 234 567, 1.234.567, 1,234,567
+        # Supports units: tys, mln, mld
         patterns = {
             "revenue": [
-                r"(?:przychody|revenues?)[\s:]+(?:ze\s+sprzedaży\s+)?[\s\w]*?[\s:]+([\d\s]+)[\s,]?(?:tys|PLN|zł)",
-                r"(?:sprzedaż|sales)[\s:]+[\s\w]*?[\s:]+([\d\s]+)"
+                r"(?:przychody|revenues?)[\s:]+(?:ze\s+sprzedaży\s+)?[\s\w]*?[\s:]+([\d\s\.,]+)\s*(?:mln|mld|tys)?\s*(?:PLN|zł)",
+                r"(?:sprzedaż|sales)[\s:]+[\s\w]*?[\s:]+([\d\s\.,]+)\s*(?:mln|mld|tys)?"
             ],
             "net_income": [
-                r"(?:zysk|wynik)\s+(?:netto|net)[\s:]+[\s\w]*?[\s:]+([\d\s\-]+)",
-                r"(?:profit|net\s+income)[\s:]+[\s\w]*?[\s:]+([\d\s\-]+)"
+                r"(?:zysk|wynik)\s+(?:netto|net)[\s:]+[\s\w]*?[\s:]+([\d\s\.,\-]+)\s*(?:mln|mld|tys)?",
+                r"(?:profit|net\s+income)[\s:]+[\s\w]*?[\s:]+([\d\s\.,\-]+)\s*(?:mln|mld|tys)?"
             ],
             "total_assets": [
-                r"(?:aktywa|assets)\s+(?:razem|total)[\s:]+[\s\w]*?[\s:]+([\d\s]+)",
-                r"(?:suma|total)\s+aktywów[\s:]+[\s\w]*?[\s:]+([\d\s]+)"
+                r"(?:aktywa|assets)\s+(?:razem|total)[\s:]+[\s\w]*?[\s:]+([\d\s\.,]+)\s*(?:mln|mld|tys)?",
+                r"(?:suma|total)\s+aktywów[\s:]+[\s\w]*?[\s:]+([\d\s\.,]+)\s*(?:mln|mld|tys)?"
             ],
         }
         
@@ -119,8 +121,38 @@ class PDFProcessor:
                 match = re.search(pattern, text, re.IGNORECASE)
                 if match:
                     try:
-                        value_str = match.group(1).replace(" ", "").replace(",", ".")
-                        metrics[metric] = float(value_str)
+                        value_str = match.group(1).strip()
+                        unit_match = re.search(r"(mln|mld|tys)", match.group(0), re.IGNORECASE)
+                        unit = unit_match.group(1).lower() if unit_match else ""
+                        
+                        # Clean number string
+                        # Remove spaces
+                        clean_val = value_str.replace(" ", "")
+                        # Handle decimal separator (comma to dot if needed)
+                        if "," in clean_val and "." not in clean_val:
+                            clean_val = clean_val.replace(",", ".")
+                        elif "," in clean_val and "." in clean_val:
+                             # Assume 1,234.56 or 1.234,56 - remove thousands separator
+                             if clean_val.index(",") < clean_val.index("."):
+                                 clean_val = clean_val.replace(",", "")
+                             else:
+                                 clean_val = clean_val.replace(".", "").replace(",", ".")
+                        
+                        value = float(clean_val)
+                        
+                        # Apply multiplier based on unit
+                        if unit == "mld":
+                            value *= 1_000_000_000
+                        elif unit == "mln":
+                            value *= 1_000_000
+                        elif unit == "tys":
+                            value *= 1_000
+                        # If no unit found, assume it might be in thousands if it's a financial report (common convention)
+                        # But safer to leave as is or assume base unit if not specified.
+                        # Let's assume if it's a small number (<10000) in a big company report, it might be in millions, 
+                        # but regex is risky here. Let's stick to explicit units or raw number.
+                        
+                        metrics[metric] = value
                         break
                     except (ValueError, AttributeError):
                         continue

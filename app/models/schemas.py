@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
@@ -100,7 +100,35 @@ class ReportDetail(ReportInfo):
 
 
 # ============================================================================
-# CHAT SCHEMAS
+# CHART SCHEMAS (NEW)
+# ============================================================================
+
+class ChartDataset(BaseModel):
+    label: str
+    data: List[Any]
+    borderColor: Optional[str] = None
+    backgroundColor: Optional[str] = None
+
+class ChartData(BaseModel):
+    labels: List[str]
+    datasets: List[ChartDataset]
+
+class Chart(BaseModel):
+    chart_id: str
+    type: str
+    title: str
+    data: ChartData
+
+class ChartDataResponse(BaseModel):
+    company_id: int
+    company_name: str
+    timeframe: Dict[str, str]
+    charts: List[Chart]
+    available_metrics: List[str]
+
+
+# ============================================================================
+# CHAT SCHEMAS (MODIFIED)
 # ============================================================================
 
 class ChatMessage(BaseModel):
@@ -111,7 +139,7 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    company_id: int  # ZMIANA: Teraz wymagane company_id zamiast report_id
+    company_id: int
     session_id: Optional[str] = None
 
 
@@ -119,7 +147,8 @@ class ChatResponse(BaseModel):
     response: str
     session_id: str
     company_name: str
-    reports_used: int  # Liczba raportów użytych w kontekście
+    has_chart: bool = False
+    chart_data: Optional[Chart] = None
     suggestions: Optional[List[str]] = None
 
 
@@ -158,9 +187,3 @@ class FinancialMetrics(BaseModel):
     total_liabilities: Optional[float] = None
     equity: Optional[float] = None
     operating_income: Optional[float] = None
-
-class SessionInfo(BaseModel):
-    session_id: str
-    report_id: Optional[int] = None
-    created_at: datetime
-    updated_at: datetime

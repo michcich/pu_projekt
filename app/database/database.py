@@ -4,14 +4,12 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, Float, JSON, For
 from datetime import datetime
 from app.config import settings
 
-# Create async engine
 engine = create_async_engine(
     settings.database_url,
     echo=True,
     future=True
 )
 
-# Create async session factory
 async_session_maker = async_sessionmaker(
     engine,
     class_=AsyncSession,
@@ -27,9 +25,9 @@ class Company(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True, index=True)
-    ticker = Column(String, nullable=True, index=True)  # Ticker giełdowy (np. PKN, CDR)
+    ticker = Column(String, nullable=True, index=True)
     description = Column(Text, nullable=True)
-    industry = Column(String, nullable=True)  # Branża
+    industry = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -47,10 +45,10 @@ class Report(Base):
     filename = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
     company_name = Column(String, nullable=True)
-    report_type = Column(String, nullable=True)  # Typ: quarterly, annual, other
-    report_period = Column(String, nullable=True)  # Okres: Q1 2024, 2023, etc.
+    report_type = Column(String, nullable=True)
+    report_period = Column(String, nullable=True)
     report_year = Column(Integer, nullable=True, index=True)
-    report_quarter = Column(Integer, nullable=True)  # 1, 2, 3, 4 lub NULL dla rocznych
+    report_quarter = Column(Integer, nullable=True)
     
     upload_date = Column(DateTime, default=datetime.utcnow)
     file_size = Column(Integer, nullable=False)
@@ -59,7 +57,7 @@ class Report(Base):
     extracted_text = Column(Text, nullable=True)
     key_metrics = Column(JSON, nullable=True)
     summary = Column(Text, nullable=True)
-    status = Column(String, default="uploaded")  # uploaded, processing, processed, error
+    status = Column(String, default="uploaded")
     
     # Relacje
     company = relationship("Company", back_populates="reports")
@@ -74,8 +72,7 @@ class ChatSession(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relacje
+
     company = relationship("Company")
     messages = relationship("ChatHistory", back_populates="session", cascade="all, delete-orphan")
 
@@ -86,11 +83,10 @@ class ChatHistory(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, ForeignKey("chat_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String, nullable=False)  # user, assistant, system
+    role = Column(String, nullable=False)
     content = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
-    
-    # Relacje
+
     session = relationship("ChatSession", back_populates="messages")
 
 

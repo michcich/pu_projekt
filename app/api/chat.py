@@ -11,10 +11,12 @@ from app.models.schemas import (
     AnalysisResponse, AnalysisRequest
 )
 from app.services.gemini_service import GeminiService
+from app.services.chart_data_service import ChartDataService
 
-router = APIRouter(prefix="/api/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 gemini_service = GeminiService()
+chart_service = ChartDataService()
 
 
 @router.post("/", response_model=ChatResponse)
@@ -23,8 +25,7 @@ async def chat(
     db: AsyncSession = Depends(get_session)
 ):
     """Send a message to the chatbot"""
-    
-    # 1. Get or create session
+
     session_id = request.session_id
     if not session_id:
         session_id = str(uuid.uuid4())
@@ -35,25 +36,29 @@ async def chat(
         db.add(new_session)
         await db.commit()
     else:
-        # Verify session exists
         result = await db.execute(
             select(ChatSession).where(ChatSession.session_id == session_id)
         )
         session = result.scalar_one_or_none()
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
         
-        # Update session with new context if provided
+        if not session:
+            new_session = ChatSession(
+                session_id=session_id,
+                company_id=request.company_id
+            )
+            db.add(new_session)
+            await db.commit()
+            session = new_session
+
         if request.company_id and session.company_id != request.company_id:
             session.company_id = request.company_id
             await db.commit()
 
-    # 2. Get Context (Company Name & Report Text)
     company_name = None
     all_reports_text = []
     reports_used = []
+    reports_for_charts = []
 
-    # Identify company
     target_company_id = request.company_id
     if not target_company_id and session_id:
         session_result = await db.execute(select(ChatSession).where(ChatSession.session_id == session_id))
@@ -62,32 +67,28 @@ async def chat(
             target_company_id = session_rec.company_id
 
     if target_company_id:
-        # Get company name
         company_res = await db.execute(select(Company).where(Company.id == target_company_id))
         company = company_res.scalar_one_or_none()
         if company:
             company_name = company.name
 
-        # POPRAWKA: Sortowanie po dacie wgrania (upload_date), aby brać NAJNOWSZE pliki
-        # Wcześniej było sortowanie po roku, który mógł być NULL
         report_res = await db.execute(
             select(Report)
             .where(Report.company_id == target_company_id)
             .where(Report.status == "processed")
-            .order_by(Report.upload_date.desc())  # <-- ZMIANA TUTAJ
-            .limit(3)
+            .order_by(Report.upload_date.desc())
         )
-        reports = report_res.scalars().all()
-        
-        for report in reports:
+        all_reports = report_res.scalars().all()
+        reports_for_charts = all_reports
+
+        for report in all_reports[:3]:
             if report.extracted_text:
                 all_reports_text.append({
                     "period": report.report_period or report.filename,
-                    "text": report.extracted_text[:10000] # Limit text per report
+                    "text": report.extracted_text[:10000]
                 })
                 reports_used.append(f"{report.report_period} ({report.filename})")
 
-    # 3. Get chat history
     history_result = await db.execute(
         select(ChatHistory)
         .where(ChatHistory.session_id == session_id)
@@ -103,8 +104,7 @@ async def chat(
         )
         for record in history_records
     ]
-    
-    # 4. Save user message
+
     user_message = ChatHistory(
         session_id=session_id,
         role=MessageRole.USER.value,
@@ -112,13 +112,10 @@ async def chat(
     )
     db.add(user_message)
     await db.commit()
-    
-    # 5. Generate response
+
     try:
-        # Add company context to prompt if available
         context_message = request.message
         if company_name and not all_reports_text:
-             # If we know the company but have no reports
             context_message = f"[Pytanie dotyczy firmy: {company_name}] {request.message}"
 
         gemini_response = await gemini_service.generate_response(
@@ -129,7 +126,6 @@ async def chat(
         )
         
         if not gemini_response["success"]:
-            # Fallback error message
             error_msg = "Przepraszam, mam problem z połączeniem z AI."
             assistant_message = ChatHistory(
                 session_id=session_id,
@@ -144,8 +140,28 @@ async def chat(
                 company_name=company_name or "",
                 reports_used=0
             )
+
+        chart_data = None
+        has_chart = False
+        chart_config = gemini_response.get("chart_config")
         
-        # Save assistant response
+        if chart_config and reports_for_charts:
+            try:
+                metrics = chart_config.get("metrics", ["revenue"])
+                chart_type = chart_config.get("chart_type", "line")
+                title = chart_config.get("title", "Wykres finansowy")
+                
+                chart_data = chart_service.prepare_chart_data(
+                    reports=reports_for_charts,
+                    metric_keys=metrics,
+                    chart_type=chart_type,
+                    title=title
+                )
+                if chart_data:
+                    has_chart = True
+            except Exception as e:
+                print(f"Error generating chart: {e}")
+
         assistant_message = ChatHistory(
             session_id=session_id,
             role=MessageRole.ASSISTANT.value,
@@ -158,6 +174,8 @@ async def chat(
             response=gemini_response["response"],
             session_id=session_id,
             company_name=company_name or "",
+            has_chart=has_chart,
+            chart_data=chart_data,
             reports_used=len(reports_used),
             suggestions=gemini_response.get("suggestions", [])
         )
@@ -174,16 +192,13 @@ async def analyze_company(
     db: AsyncSession = Depends(get_session)
 ):
     """Analyze company trends based on all reports"""
-    
-    # 1. Get Company
+
     company_res = await db.execute(select(Company).where(Company.id == company_id))
     company = company_res.scalar_one_or_none()
     
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-        
-    # 2. Get All Reports
-    # POPRAWKA: Sortowanie po dacie wgrania
+
     reports_res = await db.execute(
         select(Report)
         .where(Report.company_id == company_id)
@@ -201,11 +216,9 @@ async def analyze_company(
             reports_analyzed=0,
             generated_at=datetime.utcnow()
         )
-        
-    # 3. Prepare data for AI
+
     reports_data = []
     for report in reports:
-        # Pomijamy raporty bez tekstu (np. te puste z poprzednich testów)
         if not report.extracted_text or len(report.extracted_text) < 100:
             continue
 
@@ -214,8 +227,7 @@ async def analyze_company(
             "metrics": report.key_metrics or {},
             "summary": report.summary or ""
         })
-        
-    # 4. Generate Analysis
+
     analysis_result = await gemini_service.analyze_company_trends(
         company_name=company.name,
         all_reports_data=reports_data
@@ -226,7 +238,7 @@ async def analyze_company(
         company_name=company.name,
         analysis_type="trends",
         result=analysis_result,
-        reports_analyzed=len(reports_data), # Liczymy tylko te faktycznie użyte
+        reports_analyzed=len(reports_data),
         generated_at=datetime.utcnow()
     )
 

@@ -26,14 +26,12 @@ async def upload_report(
     db: AsyncSession = Depends(get_session)
 ):
     """Upload and process a financial report PDF"""
-    
-    # 1. Verify Company Exists
+
     company_result = await db.execute(select(Company).where(Company.id == company_id))
     company = company_result.scalar_one_or_none()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
 
-    # 2. Validate file
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
@@ -43,8 +41,7 @@ async def upload_report(
     
     if file_size > settings.max_upload_size:
         raise HTTPException(status_code=400, detail="File too large")
-    
-    # 3. Save file
+
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(settings.upload_folder, unique_filename)
     
@@ -52,21 +49,52 @@ async def upload_report(
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
-        
-        # 4. Process PDF
+
         processing_result = pdf_processor.process_report(file_path)
         
         if not processing_result["success"]:
             os.remove(file_path)
             raise HTTPException(status_code=500, detail=processing_result.get("error"))
+
+        text_sample = processing_result.get("text", "")[:5000]
+        company_info = await gemini_service.extract_company_info(text_sample)
         
-        # 5. Create Record
+        report_period = processing_result.get("report_period")
+        report_year = None
+        report_quarter = None
+        
+        if company_info:
+            if company_info.get("report_period"):
+                report_period = company_info.get("report_period")
+            report_year = company_info.get("report_year")
+            report_quarter = company_info.get("report_quarter")
+            
+            # Update report type based on AI findings if possible
+            if report_quarter:
+                report_type = "quarterly"
+            elif report_year and not report_quarter:
+                report_type = "annual"
+
+        print("Extracting metrics with AI...")
+        metrics = processing_result.get("metrics", {})
+        try:
+            ai_metrics = await gemini_service.extract_financial_metrics_ai(processing_result.get("text", ""))
+            for key, value in ai_metrics.items():
+                if value is not None:
+                    metrics[key] = value
+        except Exception as e:
+            print(f"AI extraction failed: {e}")
+            
+        processing_result["metrics"] = metrics
+
         new_report = Report(
             filename=unique_filename,
             original_filename=file.filename,
             company_id=company_id,
             company_name=company.name,
-            report_period=processing_result.get("report_period"),
+            report_period=report_period,
+            report_year=report_year,
+            report_quarter=report_quarter,
             report_type=report_type,
             file_size=file_size,
             file_path=file_path,
@@ -78,8 +106,7 @@ async def upload_report(
         db.add(new_report)
         await db.commit()
         await db.refresh(new_report)
-        
-        # 6. Generate Summary (Async in real app)
+
         try:
             summary = await gemini_service.generate_summary(processing_result.get("text", ""))
             new_report.summary = summary
@@ -124,8 +151,7 @@ async def auto_upload_report(
     
     if file_size > settings.max_upload_size:
         raise HTTPException(status_code=400, detail="File too large")
-    
-    # 2. Save file temporarily
+
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
     file_path = os.path.join(settings.upload_folder, unique_filename)
     
@@ -133,15 +159,13 @@ async def auto_upload_report(
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
-        
-        # 3. Process PDF
+
         processing_result = pdf_processor.process_report(file_path)
         
         if not processing_result["success"]:
             os.remove(file_path)
             raise HTTPException(status_code=500, detail=processing_result.get("error"))
-            
-        # 4. Extract Company Info using AI
+
         text_sample = processing_result.get("text", "")[:5000]
         company_info = await gemini_service.extract_company_info(text_sample)
         
@@ -150,13 +174,11 @@ async def auto_upload_report(
             raise HTTPException(status_code=400, detail="Could not identify company from report")
             
         company_name = company_info.get("name")
-        
-        # 5. Find or Create Company
+
         result = await db.execute(select(Company).where(Company.name == company_name))
         company = result.scalar_one_or_none()
         
         if not company:
-            # Create new company
             company = Company(
                 name=company_name,
                 ticker=company_info.get("ticker"),
@@ -166,8 +188,19 @@ async def auto_upload_report(
             db.add(company)
             await db.commit()
             await db.refresh(company)
+
+        print("Extracting metrics with AI...")
+        metrics = processing_result.get("metrics", {})
+        try:
+            ai_metrics = await gemini_service.extract_financial_metrics_ai(processing_result.get("text", ""))
+            for key, value in ai_metrics.items():
+                if value is not None:
+                    metrics[key] = value
+        except Exception as e:
+            print(f"AI extraction failed: {e}")
             
-        # 6. Create Report Record
+        processing_result["metrics"] = metrics
+
         new_report = Report(
             filename=unique_filename,
             original_filename=file.filename,
@@ -187,8 +220,7 @@ async def auto_upload_report(
         db.add(new_report)
         await db.commit()
         await db.refresh(new_report)
-        
-        # 7. Generate Summary
+
         try:
             summary = await gemini_service.generate_summary(processing_result.get("text", ""))
             new_report.summary = summary
@@ -281,7 +313,7 @@ async def delete_report(report_id: int, db: AsyncSession = Depends(get_session))
         try:
             os.remove(report.file_path)
         except OSError:
-            pass # Ignore file not found
+            pass
     
     await db.delete(report)
     await db.commit()
